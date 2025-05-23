@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sync/atomic"
 )
@@ -23,6 +25,7 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", readinessHandler)
 	mux.HandleFunc("GET /admin/metrics", apiCfg.metricsHandler)
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)
+	mux.HandleFunc("POST /api/validate_chirp", apiCfg.validationHandler)
 
 	server := http.Server{
 		Addr:	":8080",
@@ -63,4 +66,74 @@ func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request) {
 func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
 	cfg.fileserverHits.Store(0)
 	w.WriteHeader(http.StatusOK)
+}
+
+func (cfg *apiConfig) validationHandler(w http.ResponseWriter, r *http.Request){
+	type parameters struct {
+		Body string `json:"body"`
+	}
+
+	type errorResponse struct {
+		Error string `json:"error"`
+	}
+
+	type response struct {
+		Valid bool `json:"valid"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		respBody := errorResponse{
+			Error: "Error just cause",
+		}
+		dat, marshalErr := json.Marshal(respBody)
+		if marshalErr != nil {
+			log.Printf("Error marshalling JSON: %s", marshalErr)
+			w.WriteHeader(500)
+			return
+		}
+		
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(400)
+		w.Write(dat)
+		return	
+	}
+
+	if len(params.Body) > 140 {
+		respBody := errorResponse{
+			Error: "Chirp is too long",
+		}
+
+		dat, marshalErr := json.Marshal(respBody)
+		if marshalErr != nil {
+			log.Printf("Error marshalling JSON: %s", marshalErr)
+			w.WriteHeader(500)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(400)
+		w.Write(dat)
+		return
+	}
+
+	if len(params.Body) <= 140 {
+		respBody := response{
+			Valid: true,
+		}
+
+		dat, marshalErr := json.Marshal(respBody)
+		if marshalErr != nil {
+			log.Printf("Error marshalling JSON: %s", marshalErr)
+			w.WriteHeader(500)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write(dat)
+		return
+	}
 }
