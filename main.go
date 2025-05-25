@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync/atomic"
 )
 
@@ -81,6 +82,10 @@ func (cfg *apiConfig) validationHandler(w http.ResponseWriter, r *http.Request){
 		Valid bool `json:"valid"`
 	}
 
+	type CleanedResponse struct {
+		CleanedBody string `json:"cleaned_body"`
+	}
+
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
 	err := decoder.Decode(&params)
@@ -120,11 +125,13 @@ func (cfg *apiConfig) validationHandler(w http.ResponseWriter, r *http.Request){
 	}
 
 	if len(params.Body) <= 140 {
-		respBody := response{
-			Valid: true,
-		}
+		cleanedText := filterProfanity(params.Body)
 
-		dat, marshalErr := json.Marshal(respBody)
+		respBody := CleanedResponse{
+		CleanedBody: cleanedText,
+	}
+
+	dat, marshalErr := json.Marshal(respBody)
 		if marshalErr != nil {
 			log.Printf("Error marshalling JSON: %s", marshalErr)
 			w.WriteHeader(500)
@@ -136,4 +143,14 @@ func (cfg *apiConfig) validationHandler(w http.ResponseWriter, r *http.Request){
 		w.Write(dat)
 		return
 	}
+}
+
+func filterProfanity(text string) string {
+	words := strings.Split(text, " ")
+	for index, word := range words {
+		if strings.ToLower(word) == "kerfuffle" || strings.ToLower(word) == "sharbert" || strings.ToLower(word) == "fornax" {
+			words[index] = "****"
+		}
+	}
+	return strings.Join(words, " ")
 }
