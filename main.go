@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
-	"os"
+	"time"
+
 	"home/spongedingus/workspace/chirpy/internal/database"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
@@ -20,6 +23,13 @@ type apiConfig struct {
 	db *database.Queries
 }
 
+type User struct {
+	ID		uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email	string		`json:"email"`
+}
+
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
@@ -27,6 +37,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	dbQueries := database.New(db)
 
 	apiCfg := &apiConfig{db: dbQueries}
@@ -35,13 +46,15 @@ func main() {
 	
 	fileServer := http.FileServer(http.Dir("."))
 	handler := http.StripPrefix("/app", fileServer)
+
 	mux.Handle("/app", apiCfg.middlewareMetricsInc(handler))
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(handler))
 	
-	mux.HandleFunc("GET /api/healthz", readinessHandler)
-	mux.HandleFunc("GET /admin/metrics", apiCfg.metricsHandler)
-	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)
-	mux.HandleFunc("POST /api/validate_chirp", apiCfg.validationHandler)
+	mux.HandleFunc("/api/healthz", readinessHandler)
+	mux.HandleFunc("/admin/metrics", apiCfg.metricsHandler)
+	mux.HandleFunc("/admin/reset", apiCfg.resetHandler)
+	mux.HandleFunc("/api/validate_chirp", apiCfg.validationHandler)
+	mux.HandleFunc("/api/users", apiCfg.postHandler)
 
 	server := http.Server{
 		Addr:	":8080",
@@ -56,6 +69,10 @@ func main() {
 
 func readinessHandler(w http.ResponseWriter, r *http.Request) {
 	
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(200)
 	w.Write([]byte("OK"))
@@ -69,6 +86,10 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 }
 
 func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	hits := cfg.fileserverHits.Load()
 	template := `<html>
   <body>
@@ -80,11 +101,32 @@ func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
+	platform := os.Getenv("PLATFORM")
+	if platform != "dev" {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	err := cfg.db.DeleteAllUsers(r.Context())
+	if err != nil {
+		http.Error(w, "Could not delete users", http.StatusInternalServerError)
+		return
+	}
+
 	cfg.fileserverHits.Store(0)
 	w.WriteHeader(http.StatusOK)
 }
 
 func (cfg *apiConfig) validationHandler(w http.ResponseWriter, r *http.Request){
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	type parameters struct {
 		Body string `json:"body"`
 	}
@@ -104,6 +146,7 @@ func (cfg *apiConfig) validationHandler(w http.ResponseWriter, r *http.Request){
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
 	err := decoder.Decode(&params)
+
 	if err != nil {
 		respBody := errorResponse{
 			Error: "Error just cause",
@@ -168,4 +211,41 @@ func filterProfanity(text string) string {
 		}
 	}
 	return strings.Join(words, " ")
+}
+
+func (cfg *apiConfig) postHandler(w http.ResponseWriter, r *http.Request){
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	type userRequest struct {
+		Email string `json:"email"`
+	}
+
+	var params userRequest
+	decoder := json.NewDecoder(r.Body)
+	err := decoder.Decode(&params)
+
+	if err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	user, err := cfg.db.CreateUser(r.Context(), params.Email)
+	if err != nil {
+		log.Println("error creating user:", err)
+		http.Error(w, "Could not create user", http.StatusInternalServerError)
+		return
+	}
+
+	res := User{
+		ID:		user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:	user.Email,
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(res)
 }
