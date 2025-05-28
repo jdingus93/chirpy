@@ -55,6 +55,7 @@ func main() {
 	mux.HandleFunc("/admin/reset", apiCfg.resetHandler)
 	mux.HandleFunc("/api/users", apiCfg.postHandler)
 	mux.HandleFunc("POST /api/chirps", apiCfg.chirpsHandler)
+	mux.HandleFunc("GET /api/chirps", apiCfg.getChirpsHandler)
 
 	server := http.Server{
 		Addr:	":8080",
@@ -257,7 +258,6 @@ func (cfg *apiConfig) postHandler(w http.ResponseWriter, r *http.Request){
 
 	user, err := cfg.db.CreateUser(r.Context(), params.Email)
 	if err != nil {
-		log.Println("error creating user:", err)
 		http.Error(w, "Could not create user", http.StatusInternalServerError)
 		return
 	}
@@ -271,4 +271,41 @@ func (cfg *apiConfig) postHandler(w http.ResponseWriter, r *http.Request){
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(res)
+}
+
+func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, r *http.Request){
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	allChirps, err := cfg.db.RetrieveChirps(r.Context())
+	if err != nil {
+		http.Error(w, "Could not get chirps", http.StatusInternalServerError)
+		return
+	}
+
+	type chirpResponse struct {
+    ID        uuid.UUID `json:"id"`
+    CreatedAt time.Time `json:"created_at"`
+    UpdatedAt time.Time `json:"updated_at"`
+    Body      string    `json:"body"`
+    UserID    uuid.UUID `json:"user_id"`
+	}
+
+	var responses []chirpResponse
+
+	for _, chirp := range allChirps {
+		resp := chirpResponse{
+    	ID:        chirp.ID,
+    	CreatedAt: chirp.CreatedAt,
+    	UpdatedAt: chirp.UpdatedAt,
+    	Body:      chirp.Body,
+    	UserID:    chirp.UserID.UUID,
+	}
+	
+		responses = append(responses, resp)
+	}
+
+	json.NewEncoder(w).Encode(responses)
 }
