@@ -53,8 +53,8 @@ func main() {
 	mux.HandleFunc("/api/healthz", readinessHandler)
 	mux.HandleFunc("/admin/metrics", apiCfg.metricsHandler)
 	mux.HandleFunc("/admin/reset", apiCfg.resetHandler)
-	mux.HandleFunc("/api/validate_chirp", apiCfg.validationHandler)
 	mux.HandleFunc("/api/users", apiCfg.postHandler)
+	mux.HandleFunc("POST /api/chirps", apiCfg.chirpsHandler)
 
 	server := http.Server{
 		Addr:	":8080",
@@ -121,7 +121,10 @@ func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (cfg *apiConfig) validationHandler(w http.ResponseWriter, r *http.Request){
+func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, r *http.Request){
+
+	ctx := r.Context()
+	
 	if r.Method != "POST" {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -129,18 +132,11 @@ func (cfg *apiConfig) validationHandler(w http.ResponseWriter, r *http.Request){
 
 	type parameters struct {
 		Body string `json:"body"`
+		UserID string `json:"user_id"`
 	}
 
 	type errorResponse struct {
 		Error string `json:"error"`
-	}
-
-	type response struct {
-		Valid bool `json:"valid"`
-	}
-
-	type CleanedResponse struct {
-		CleanedBody string `json:"cleaned_body"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -182,26 +178,53 @@ func (cfg *apiConfig) validationHandler(w http.ResponseWriter, r *http.Request){
 		return
 	}
 
-	if len(params.Body) <= 140 {
-		cleanedText := filterProfanity(params.Body)
+	cleanedBody := filterProfanity(params.Body)
 
-		respBody := CleanedResponse{
-		CleanedBody: cleanedText,
-	}
-
-	dat, marshalErr := json.Marshal(respBody)
-		if marshalErr != nil {
-			log.Printf("Error marshalling JSON: %s", marshalErr)
-			w.WriteHeader(500)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(200)
-		w.Write(dat)
+	uid, err := uuid.Parse(params.UserID)
+	if err != nil {
+		http.Error(w, "Invalid user_id", http.StatusBadRequest)
 		return
 	}
+	nullUID := uuid.NullUUID{UUID: uid, Valid: true}
+
+	chirpParams := database.CreateChirpParams{
+		ID:			uuid.New(),
+		CreatedAt:	time.Now().UTC(),
+		UpdatedAt:	time.Now().UTC(),
+		Body:		cleanedBody,
+		UserID:		nullUID,
+	}
+
+	chirp, err := cfg.db.CreateChirp(ctx, chirpParams)
+
+	if err != nil {
+		log.Printf("CreateChirp failed: %v", err)
+		http.Error(w, "Unable to create Chirp", http.StatusInternalServerError)
+		return
+	}
+
+	type chirpResponse struct {
+    ID        uuid.UUID `json:"id"`
+    CreatedAt time.Time `json:"created_at"`
+    UpdatedAt time.Time `json:"updated_at"`
+    Body      string    `json:"body"`
+    UserID    uuid.UUID `json:"user_id"`
+	}
+
+
+	resp := chirpResponse{
+    	ID:        chirp.ID,
+    	CreatedAt: chirp.CreatedAt,
+    	UpdatedAt: chirp.UpdatedAt,
+    	Body:      chirp.Body,
+    	UserID:    chirp.UserID.UUID,
+	}
+		
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	json.NewEncoder(w).Encode(resp)
 }
+
 
 func filterProfanity(text string) string {
 	words := strings.Split(text, " ")
