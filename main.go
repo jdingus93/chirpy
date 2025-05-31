@@ -56,6 +56,7 @@ func main() {
 	mux.HandleFunc("/api/users", apiCfg.postHandler)
 	mux.HandleFunc("POST /api/chirps", apiCfg.chirpsHandler)
 	mux.HandleFunc("GET /api/chirps", apiCfg.getChirpsHandler)
+	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.getChirpHandler)
 
 	server := http.Server{
 		Addr:	":8080",
@@ -308,4 +309,43 @@ func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, r *http.Request){
 	}
 
 	json.NewEncoder(w).Encode(responses)
+}
+
+func (cfg *apiConfig) getChirpHandler(w http.ResponseWriter, r *http.Request){
+	if r.Method != "GET" {
+		http.Error(w, "Method no allowed", http.StatusInternalServerError)
+		return
+	}
+
+	chirps, err := cfg.db.RetrieveChirps(r.Context())
+	if err != nil {
+		http.Error(w, "Could not get chirp", http.StatusInternalServerError)
+	}
+
+	type chirpResponse struct {
+		ID			uuid.UUID	`json:"id"`
+		CreatedAt	time.Time	`json:"created_at"`
+		UpdatedAt	time.Time	`json:"updated_at"`
+		Body		string		`json:"body"`
+		UserID		uuid.UUID	`json:"user_id"`
+	}
+
+	chirpID := r.PathValue("chirpID")
+	
+	for _, chirp := range chirps {
+		if chirp.ID.String() == chirpID {
+			resp := chirpResponse{
+				ID:			chirp.ID,
+				CreatedAt:	chirp.CreatedAt,
+				UpdatedAt:	chirp.UpdatedAt,
+				Body:		chirp.Body,
+				UserID:		chirp.UserID.UUID,
+			}
+
+			json.NewEncoder(w).Encode(resp)
+			return
+		}
+	}
+
+	http.Error(w, "Chirp not found", http.StatusNotFound)
 }
