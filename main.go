@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"home/spongedingus/workspace/chirpy/internal/auth"
 	"home/spongedingus/workspace/chirpy/internal/database"
 
 	"github.com/google/uuid"
@@ -57,6 +58,7 @@ func main() {
 	mux.HandleFunc("POST /api/chirps", apiCfg.chirpsHandler)
 	mux.HandleFunc("GET /api/chirps", apiCfg.getChirpsHandler)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.getChirpHandler)
+	mux.HandleFunc("POST /api/login", apiCfg.loginHandler)
 
 	server := http.Server{
 		Addr:	":8080",
@@ -245,6 +247,7 @@ func (cfg *apiConfig) postHandler(w http.ResponseWriter, r *http.Request){
 	}
 
 	type userRequest struct {
+		Password string `json:"password"`
 		Email string `json:"email"`
 	}
 
@@ -257,8 +260,23 @@ func (cfg *apiConfig) postHandler(w http.ResponseWriter, r *http.Request){
 		return
 	}
 
-	user, err := cfg.db.CreateUser(r.Context(), params.Email)
+	hashedPassword, err := auth.HashPassword(params.Password)
 	if err != nil {
+		http.Error(w, "Failed to has password", http.StatusInternalServerError)
+		return
+	}
+
+	createUser := database.CreateUserParams{
+		HashedPassword: hashedPassword,
+		Email: params.Email,
+	}
+
+	fmt.Printf("About to create user - Email: %s, HashedPassword length: %d\n", 
+    createUser.Email, len(createUser.HashedPassword))
+
+	user, err := cfg.db.CreateUser(r.Context(), createUser)
+	if err != nil {
+		fmt.Printf("Database error: %v\n", err)
 		http.Error(w, "Could not create user", http.StatusInternalServerError)
 		return
 	}
@@ -271,6 +289,50 @@ func (cfg *apiConfig) postHandler(w http.ResponseWriter, r *http.Request){
 	}
 
 	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(res)
+}
+
+func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	type userRequest struct {
+		Password string `json:"password"`
+		Email string `json:"email"`
+	}
+
+	var params userRequest
+	decoder := json.NewDecoder(r.Body)
+	err := decoder.Decode(&params)
+
+	if err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	user, err := cfg.db.GetUserByEmail(r.Context(), params.Email)
+	if err != nil {
+		fmt.Printf("Database error: %v\n", err)
+		http.Error(w, "Incorrect email or password", http.StatusUnauthorized)
+		return
+	}
+
+	err = auth.CheckPasswordHash(user.HashedPassword, params.Password)
+	if err != nil {
+		http.Error(w, "Incorrect email or password", http.StatusUnauthorized)
+		return
+	}
+
+	res := User{
+		ID:		user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:	user.Email,
+	}
+
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(res)
 }
 
