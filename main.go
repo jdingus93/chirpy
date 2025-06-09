@@ -22,6 +22,7 @@ import (
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	db *database.Queries
+	jwtSecret string
 }
 
 type User struct {
@@ -29,6 +30,14 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email	string		`json:"email"`
+}
+
+type loginResponse struct {
+	ID		uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email	string		`json:"email"`
+	Token	string		`json:"token"`
 }
 
 func main() {
@@ -41,7 +50,10 @@ func main() {
 
 	dbQueries := database.New(db)
 
-	apiCfg := &apiConfig{db: dbQueries}
+	apiCfg := &apiConfig{
+		db: dbQueries,
+		jwtSecret: os.Getenv("JWT_SECRET"),
+	}
 
 	mux := http.NewServeMux()
 	
@@ -134,6 +146,20 @@ func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, r *http.Request){
 		return
 	}
 
+	tokenString, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte("Unauthorized Request"))
+		return
+	}
+
+	userID, err := auth.ValidateJWT(tokenString, cfg.jwtSecret)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte("Unauthorized User"))
+		return
+	}
+
 	type parameters struct {
 		Body string `json:"body"`
 		UserID string `json:"user_id"`
@@ -145,7 +171,7 @@ func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, r *http.Request){
 
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
-	err := decoder.Decode(&params)
+	err = decoder.Decode(&params)
 
 	if err != nil {
 		respBody := errorResponse{
@@ -184,19 +210,12 @@ func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, r *http.Request){
 
 	cleanedBody := filterProfanity(params.Body)
 
-	uid, err := uuid.Parse(params.UserID)
-	if err != nil {
-		http.Error(w, "Invalid user_id", http.StatusBadRequest)
-		return
-	}
-	nullUID := uuid.NullUUID{UUID: uid, Valid: true}
-
 	chirpParams := database.CreateChirpParams{
 		ID:			uuid.New(),
 		CreatedAt:	time.Now().UTC(),
 		UpdatedAt:	time.Now().UTC(),
 		Body:		cleanedBody,
-		UserID:		nullUID,
+		UserID:		uuid.NullUUID{UUID: userID, Valid: true},
 	}
 
 	chirp, err := cfg.db.CreateChirp(ctx, chirpParams)
@@ -301,6 +320,7 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
 	type userRequest struct {
 		Password string `json:"password"`
 		Email string `json:"email"`
+		ExpiresInSeconds *int `json:"expires_in_seconds"`
 	}
 
 	var params userRequest
@@ -325,11 +345,24 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
 		return
 	}
 
-	res := User{
+	var expiresInDuration time.Duration
+	if params.ExpiresInSeconds == nil {
+		expiresInDuration = time.Hour
+	} else {
+		expiresInDuration = time.Duration(*params.ExpiresInSeconds) * time.Second
+		if expiresInDuration > time.Hour {
+			expiresInDuration = time.Hour
+		}
+	}
+
+	token, err := auth.MakeJWT(user.ID, cfg.jwtSecret, expiresInDuration)
+
+	res := loginResponse{
 		ID:		user.ID,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Email:	user.Email,
+		Token: token,
 	}
 
 	w.WriteHeader(http.StatusOK)
