@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -38,6 +39,7 @@ type loginResponse struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	Email	string		`json:"email"`
 	Token	string		`json:"token"`
+	RefreshToken string	`json:"refresh_token"`
 }
 
 func main() {
@@ -71,6 +73,8 @@ func main() {
 	mux.HandleFunc("GET /api/chirps", apiCfg.getChirpsHandler)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.getChirpHandler)
 	mux.HandleFunc("POST /api/login", apiCfg.loginHandler)
+	mux.HandleFunc("POST /api/refresh", apiCfg.refreshHandler)
+	mux.HandleFunc("POST /api/revoke", apiCfg.revokeHandler)
 
 	server := http.Server{
 		Addr:	":8080",
@@ -320,7 +324,7 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
 	type userRequest struct {
 		Password string `json:"password"`
 		Email string `json:"email"`
-		ExpiresInSeconds *int `json:"expires_in_seconds"`
+		
 	}
 
 	var params userRequest
@@ -345,17 +349,35 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
 		return
 	}
 
-	var expiresInDuration time.Duration
-	if params.ExpiresInSeconds == nil {
-		expiresInDuration = time.Hour
-	} else {
-		expiresInDuration = time.Duration(*params.ExpiresInSeconds) * time.Second
-		if expiresInDuration > time.Hour {
-			expiresInDuration = time.Hour
-		}
-	}
+	expiresInDuration := time.Hour
 
 	token, err := auth.MakeJWT(user.ID, cfg.jwtSecret, expiresInDuration)
+	if err != nil {
+		http.Error(w, "failed to create token", http.StatusInternalServerError)
+		return
+	}
+
+	refreshtoken, err := auth.MakeRefreshToken()
+	if err != nil {
+		http.Error(w, "Failed to create refresh token", http.StatusInternalServerError)
+		return
+	}
+
+	fmt.Printf("Created refresh token: %s\n", refreshtoken)
+
+	_, err = cfg.db.CreateRefreshToken(context.Background(), database.CreateRefreshTokenParams{
+		Token: refreshtoken,
+		UserID: user.ID,
+		ExpiresAt: time.Now().Add(60 * 24 * time.Hour),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		RevokedAt: sql.NullTime{Valid: false},
+	})
+
+	if err != nil {
+		http.Error(w, "Failed to create refresh token", http.StatusInternalServerError)
+		return
+	}
 
 	res := loginResponse{
 		ID:		user.ID,
@@ -363,8 +385,10 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
 		UpdatedAt: user.UpdatedAt,
 		Email:	user.Email,
 		Token: token,
+		RefreshToken: refreshtoken,
 	}
 
+	fmt.Printf("Login response: %+v\n", res)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(res)
 }
@@ -408,7 +432,7 @@ func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, r *http.Request){
 
 func (cfg *apiConfig) getChirpHandler(w http.ResponseWriter, r *http.Request){
 	if r.Method != "GET" {
-		http.Error(w, "Method no allowed", http.StatusInternalServerError)
+		http.Error(w, "Method not allowed", http.StatusInternalServerError)
 		return
 	}
 
@@ -443,4 +467,66 @@ func (cfg *apiConfig) getChirpHandler(w http.ResponseWriter, r *http.Request){
 	}
 
 	http.Error(w, "Chirp not found", http.StatusNotFound)
+}
+
+func (cfg *apiConfig) refreshHandler(w http.ResponseWriter, r *http.Request){
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	refreshToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		http.Error(w, "Could not extract refresh token", http.StatusInternalServerError)
+		return
+	}
+
+	fmt.Printf("Looking for refresh token: %s\n", refreshToken)
+
+	user, err := cfg.db.GetUserFromRefreshToken(context.Background(), refreshToken)
+	if err != nil {
+		http.Error(w, "Refresh token is expired or doesn't exist", http.StatusUnauthorized)
+		return
+	}
+
+	token, err := auth.MakeJWT(user.ID, cfg.jwtSecret, time.Hour)
+	if err != nil {
+		http.Error(w, "failed to create token", http.StatusUnauthorized)
+		return
+	}
+
+	response := map[string]string{
+		"token": token,
+}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+func (cfg * apiConfig) revokeHandler(w http.ResponseWriter, r *http.Request){
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	refreshToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		http.Error(w, "Could not extract refresh token", http.StatusInternalServerError)
+		return
+	}
+
+	now := time.Now()
+	params := database.RevokeRefreshTokenParams{
+		RevokedAt: sql.NullTime{Time: time.Now(), Valid: true},
+		UpdatedAt: now,
+		Token: refreshToken,
+	}
+
+	err = cfg.db.RevokeRefreshToken(r.Context(), params)
+	if err != nil {
+		http.Error(w, "Invalid refresh token", http.StatusUnauthorized)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

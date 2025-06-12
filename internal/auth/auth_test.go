@@ -4,11 +4,12 @@ import (
 	"net/http"
 	"testing"
 	"time"
+	"errors"
 
 	"github.com/google/uuid"
 )
 
-var ErrNoAuthHeader = error.New("authorization header not found")
+var ErrNoAuthHeader = errors.New("authorization header not found")
 
 func TestMakeJWT(t *testing.T) {
 	UserID := uuid.New()
