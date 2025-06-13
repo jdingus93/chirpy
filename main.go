@@ -76,6 +76,7 @@ func main() {
 	mux.HandleFunc("POST /api/refresh", apiCfg.refreshHandler)
 	mux.HandleFunc("POST /api/revoke", apiCfg.revokeHandler)
 	mux.HandleFunc("PUT /api/users", apiCfg.updateEmailPasswordHandler)
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.deleteChirpHandler)
 
 	server := http.Server{
 		Addr:	":8080",
@@ -433,7 +434,7 @@ func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, r *http.Request){
 
 func (cfg *apiConfig) getChirpHandler(w http.ResponseWriter, r *http.Request){
 	if r.Method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusInternalServerError)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -615,4 +616,49 @@ func (cfg *apiConfig) updateEmailPasswordHandler(w http.ResponseWriter, r *http.
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(res)
+}
+
+func (cfg *apiConfig) deleteChirpHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "DELETE" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	chirpID := r.PathValue("chirpID")
+	tokenString, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		http.Error(w, "Authentication failed or not been provided", http.StatusUnauthorized)
+		return
+	}
+
+	chirps, err := cfg.db.RetrieveChirps(r.Context())
+	if err != nil {
+		http.Error(w, "Could not get chirp", http.StatusInternalServerError)
+	}
+
+	userID, err := auth.ValidateJWT(tokenString, cfg.jwtSecret)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte("Unauthorized User"))
+		return
+	}
+
+	for _, chirp := range chirps {
+		if chirp.ID.String() == chirpID {
+			if userID == chirp.UserID.UUID {
+				err := cfg.db.DeleteChirp(r.Context(), chirp.ID)
+				if err != nil {
+					http.Error(w, "Could not delete chirp", http.StatusInternalServerError)
+					return
+				}
+
+				w.WriteHeader(http.StatusNoContent)
+				return
+			} else {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+		}
+	}
+	w.WriteHeader(http.StatusNotFound)
 }
