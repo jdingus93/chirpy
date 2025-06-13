@@ -75,6 +75,7 @@ func main() {
 	mux.HandleFunc("POST /api/login", apiCfg.loginHandler)
 	mux.HandleFunc("POST /api/refresh", apiCfg.refreshHandler)
 	mux.HandleFunc("POST /api/revoke", apiCfg.revokeHandler)
+	mux.HandleFunc("PUT /api/users", apiCfg.updateEmailPasswordHandler)
 
 	server := http.Server{
 		Addr:	":8080",
@@ -285,7 +286,7 @@ func (cfg *apiConfig) postHandler(w http.ResponseWriter, r *http.Request){
 
 	hashedPassword, err := auth.HashPassword(params.Password)
 	if err != nil {
-		http.Error(w, "Failed to has password", http.StatusInternalServerError)
+		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
 		return
 	}
 
@@ -529,4 +530,89 @@ func (cfg * apiConfig) revokeHandler(w http.ResponseWriter, r *http.Request){
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (cfg *apiConfig) updateEmailPasswordHandler(w http.ResponseWriter, r *http.Request) {
+
+	if r.Method != "PUT" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	tokenString, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte("Unauthorized Request"))
+		return
+	}
+
+	userID, err := auth.ValidateJWT(tokenString, cfg.jwtSecret)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte("Unauthorized User"))
+		return
+	}
+
+	type parameters struct {
+		Email	string	`json:"email"`
+		Password	string	`json:"password"`
+	}
+
+	type errorResponse struct {
+		Error string `json:"error"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err = decoder.Decode(&params)
+
+	if err != nil {
+		respBody := errorResponse{
+			Error: fmt.Sprintf("Error unmarshalling JSON: %s", err),
+		}
+
+		dat, marshalErr := json.Marshal(respBody)
+		if marshalErr != nil {
+			log.Printf("Error marshalling JSON: %s", marshalErr)
+			w.WriteHeader(500)
+			return
+		}
+		
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(400)
+		w.Write(dat)
+		return	
+	}
+
+	hashedPassword, err := auth.HashPassword(params.Password)
+	if err != nil {
+		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		return
+	}
+
+	updateUser := database.UpdateUserParams{
+		HashedPassword: hashedPassword,
+		Email: params.Email,
+		ID: userID,
+	}
+
+	fmt.Printf("About to update user - Email: %s, HashedPassword length: %d\n", 
+    updateUser.Email, len(updateUser.HashedPassword))
+
+	user, err := cfg.db.UpdateUser(r.Context(), updateUser)
+	if err != nil {
+		fmt.Printf("Database error: %v\n", err)
+		http.Error(w, "Could not create user", http.StatusInternalServerError)
+		return
+	}
+
+	res := User{
+		ID:		user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:	user.Email,
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(res)
 }
