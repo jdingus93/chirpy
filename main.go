@@ -25,6 +25,7 @@ type apiConfig struct {
 	fileserverHits atomic.Int32
 	db *database.Queries
 	jwtSecret string
+	polkaKey string
 }
 
 type User struct {
@@ -74,6 +75,7 @@ func main() {
 	apiCfg := &apiConfig{
 		db: dbQueries,
 		jwtSecret: os.Getenv("JWT_SECRET"),
+		polkaKey: os.Getenv("POLKA_KEY"),
 	}
 
 	mux := http.NewServeMux()
@@ -685,8 +687,19 @@ func (cfg *apiConfig) deleteChirpHandler(w http.ResponseWriter, r *http.Request)
 }
 
 func (cfg *apiConfig) polkaWebhookHandler(w http.ResponseWriter, r *http.Request) {
+	APIKey, err := auth.GetAPIKey(r.Header)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	
+	if APIKey != cfg.polkaKey {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
 	var webhook PolkaWebhook
-	err := json.NewDecoder(r.Body).Decode(&webhook)
+	err = json.NewDecoder(r.Body).Decode(&webhook)
 	if err != nil {
 		w.WriteHeader(http.StatusNoContent)
 		return
