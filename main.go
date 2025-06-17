@@ -15,6 +15,7 @@ import (
 	"home/spongedingus/workspace/chirpy/internal/auth"
 	"home/spongedingus/workspace/chirpy/internal/database"
 
+	"github.com/pressly/goose/v3"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -31,6 +32,7 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email	string		`json:"email"`
+	IsChirpyRed bool	`json:"is_chirpy_red"`
 }
 
 type loginResponse struct {
@@ -40,7 +42,15 @@ type loginResponse struct {
 	Email	string		`json:"email"`
 	Token	string		`json:"token"`
 	RefreshToken string	`json:"refresh_token"`
+	IsChirpyRed bool	`json:"is_chirpy_red"`
 }
+
+type PolkaWebhook struct {
+		Event string `json:"event"`
+		Data struct {
+			UserID string `json:"user_id"`
+		} `json:"data"`
+	}
 
 func main() {
 	godotenv.Load()
@@ -48,6 +58,15 @@ func main() {
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	if err := goose.SetDialect("postgres"); err != nil {
+		log.Fatalf("failed to set goose dialect: %v", err)
+	}
+
+	migrationsDir := "./sql/schema"
+	if err := goose.Up(db, migrationsDir); err != nil {
+		log.Fatalf("failed to set goose dialect: %v", err)
 	}
 
 	dbQueries := database.New(db)
@@ -77,6 +96,7 @@ func main() {
 	mux.HandleFunc("POST /api/revoke", apiCfg.revokeHandler)
 	mux.HandleFunc("PUT /api/users", apiCfg.updateEmailPasswordHandler)
 	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.deleteChirpHandler)
+	mux.HandleFunc("POST /api/polka/webhooks", apiCfg.polkaWebhookHandler)
 
 	server := http.Server{
 		Addr:	":8080",
@@ -388,6 +408,7 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
 		Email:	user.Email,
 		Token: token,
 		RefreshToken: refreshtoken,
+		IsChirpyRed: user.IsChirpyRed.Valid && user.IsChirpyRed.Bool,
 	}
 
 	fmt.Printf("Login response: %+v\n", res)
@@ -661,4 +682,42 @@ func (cfg *apiConfig) deleteChirpHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	w.WriteHeader(http.StatusNotFound)
+}
+
+func (cfg *apiConfig) polkaWebhookHandler(w http.ResponseWriter, r *http.Request) {
+	var webhook PolkaWebhook
+	err := json.NewDecoder(r.Body).Decode(&webhook)
+	if err != nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if webhook.Event != "user.upgraded" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	parsedID, parseErr := uuid.Parse(webhook.Data.UserID)
+	if parseErr != nil {
+		http.Error(w, "Unable to parse id", http.StatusBadRequest)
+		return
+	}
+
+	result, err := cfg.db.UpgradeUser(r.Context(), parsedID)
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+	if rows == 0 {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	
+	w.WriteHeader(http.StatusNoContent)
 }
