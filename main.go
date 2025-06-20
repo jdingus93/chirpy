@@ -11,12 +11,12 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"strconv"
 
 	"home/spongedingus/workspace/chirpy/internal/auth"
 	"home/spongedingus/workspace/chirpy/internal/database"
 
 	"github.com/pressly/goose/v3"
-	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
@@ -29,7 +29,7 @@ type apiConfig struct {
 }
 
 type User struct {
-	ID		uuid.UUID `json:"id"`
+	ID		int32 `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email	string		`json:"email"`
@@ -37,7 +37,7 @@ type User struct {
 }
 
 type loginResponse struct {
-	ID		uuid.UUID `json:"id"`
+	ID		int32 `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email	string		`json:"email"`
@@ -181,7 +181,7 @@ func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, r *http.Request){
 		return
 	}
 
-	userID, err := auth.ValidateJWT(tokenString, cfg.jwtSecret)
+	userID, err := auth.ValidateJWT(tokenString, []byte(cfg.jwtSecret))
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte("Unauthorized User"))
@@ -239,11 +239,11 @@ func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, r *http.Request){
 	cleanedBody := filterProfanity(params.Body)
 
 	chirpParams := database.CreateChirpParams{
-		ID:			uuid.New(),
 		CreatedAt:	time.Now().UTC(),
 		UpdatedAt:	time.Now().UTC(),
 		Body:		cleanedBody,
-		UserID:		uuid.NullUUID{UUID: userID, Valid: true},
+		UserID: 	sql.NullInt32{Int32: int32(userID), Valid: true},
+		AuthorID:	int32(userID),
 	}
 
 	chirp, err := cfg.db.CreateChirp(ctx, chirpParams)
@@ -255,11 +255,11 @@ func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, r *http.Request){
 	}
 
 	type chirpResponse struct {
-    ID        uuid.UUID `json:"id"`
+    ID        int32 `json:"id"`
     CreatedAt time.Time `json:"created_at"`
     UpdatedAt time.Time `json:"updated_at"`
     Body      string    `json:"body"`
-    UserID    uuid.UUID `json:"user_id"`
+    UserID    int32 `json:"user_id"`
 	}
 
 
@@ -268,7 +268,7 @@ func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, r *http.Request){
     	CreatedAt: chirp.CreatedAt,
     	UpdatedAt: chirp.UpdatedAt,
     	Body:      chirp.Body,
-    	UserID:    chirp.UserID.UUID,
+    	UserID:    chirp.UserID.Int32,
 	}
 		
 	w.Header().Set("Content-Type", "application/json")
@@ -328,8 +328,10 @@ func (cfg *apiConfig) postHandler(w http.ResponseWriter, r *http.Request){
 		return
 	}
 
+
+
 	res := User{
-		ID:		user.ID,
+		ID:		int32(user.ID),
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Email:	user.Email,
@@ -375,7 +377,7 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
 
 	expiresInDuration := time.Hour
 
-	token, err := auth.MakeJWT(user.ID, cfg.jwtSecret, expiresInDuration)
+	token, err := auth.MakeJWT(user.ID, []byte(cfg.jwtSecret), expiresInDuration)
 	if err != nil {
 		http.Error(w, "failed to create token", http.StatusInternalServerError)
 		return
@@ -424,29 +426,43 @@ func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, r *http.Request){
 		return
 	}
 
-	allChirps, err := cfg.db.RetrieveChirps(r.Context())
-	if err != nil {
-		http.Error(w, "Could not get chirps", http.StatusInternalServerError)
-		return
+	s := r.URL.Query().Get("author_id")
+	var chirpsToReturn []database.Chirp
+	var dbErr error
+
+	if s != "" {
+		authorIDInt, convErr := strconv.Atoi(s)
+		if convErr != nil {
+			http.Error(w, "Invalid author id", http.StatusBadRequest)
+			return
+		}
+
+		chirpsToReturn, dbErr = cfg.db.RetrieveChirps(r.Context(), int32(authorIDInt))
+
+	} else {
+		chirpsToReturn, dbErr = cfg.db.RetrieveChirps(r.Context(), int32(0))
 	}
 
+	if dbErr != nil {
+		http.Error(w, "Could not get chirps from database", http.StatusInternalServerError)
+		return
+		}
+
 	type chirpResponse struct {
-    ID        uuid.UUID `json:"id"`
+    ID        int32 `json:"id"`
     CreatedAt time.Time `json:"created_at"`
     UpdatedAt time.Time `json:"updated_at"`
     Body      string    `json:"body"`
-    UserID    uuid.UUID `json:"user_id"`
 	}
 
 	var responses []chirpResponse
 
-	for _, chirp := range allChirps {
+	for _, chirp := range chirpsToReturn {
 		resp := chirpResponse{
     	ID:        chirp.ID,
     	CreatedAt: chirp.CreatedAt,
     	UpdatedAt: chirp.UpdatedAt,
     	Body:      chirp.Body,
-    	UserID:    chirp.UserID.UUID,
 	}
 	
 		responses = append(responses, resp)
@@ -461,32 +477,38 @@ func (cfg *apiConfig) getChirpHandler(w http.ResponseWriter, r *http.Request){
 		return
 	}
 
-	chirps, err := cfg.db.RetrieveChirps(r.Context())
+	chirps, err := cfg.db.RetrieveChirps(r.Context(), int32(0))
 	if err != nil {
 		http.Error(w, "Could not get chirp", http.StatusInternalServerError)
 	}
 
 	type chirpResponse struct {
-		ID			uuid.UUID	`json:"id"`
+		ID			int32	`json:"id"`
 		CreatedAt	time.Time	`json:"created_at"`
 		UpdatedAt	time.Time	`json:"updated_at"`
 		Body		string		`json:"body"`
-		UserID		uuid.UUID	`json:"user_id"`
 	}
 
-	chirpID := r.PathValue("chirpID")
+	chirpIDStr := r.PathValue("chirpID")
+
+	chirpIDint, convErr := strconv.Atoi(chirpIDStr)
+	if convErr != nil {
+		http.Error(w, "Invalid chirps ID format in path", http.StatusBadRequest)
+		return
+	}
 	
 	for _, chirp := range chirps {
-		if chirp.ID.String() == chirpID {
+		if chirp.ID == int32(chirpIDint) {
 			resp := chirpResponse{
 				ID:			chirp.ID,
 				CreatedAt:	chirp.CreatedAt,
 				UpdatedAt:	chirp.UpdatedAt,
 				Body:		chirp.Body,
-				UserID:		chirp.UserID.UUID,
 			}
 
 			json.NewEncoder(w).Encode(resp)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
 			return
 		}
 	}
@@ -514,7 +536,7 @@ func (cfg *apiConfig) refreshHandler(w http.ResponseWriter, r *http.Request){
 		return
 	}
 
-	token, err := auth.MakeJWT(user.ID, cfg.jwtSecret, time.Hour)
+	token, err := auth.MakeJWT(user.ID, []byte(cfg.jwtSecret), time.Hour)
 	if err != nil {
 		http.Error(w, "failed to create token", http.StatusUnauthorized)
 		return
@@ -570,7 +592,7 @@ func (cfg *apiConfig) updateEmailPasswordHandler(w http.ResponseWriter, r *http.
 		return
 	}
 
-	userID, err := auth.ValidateJWT(tokenString, cfg.jwtSecret)
+	userID, err := auth.ValidateJWT(tokenString, []byte(cfg.jwtSecret))
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte("Unauthorized User"))
@@ -617,7 +639,7 @@ func (cfg *apiConfig) updateEmailPasswordHandler(w http.ResponseWriter, r *http.
 	updateUser := database.UpdateUserParams{
 		HashedPassword: hashedPassword,
 		Email: params.Email,
-		ID: userID,
+		ID: int32(userID),
 	}
 
 	fmt.Printf("About to update user - Email: %s, HashedPassword length: %d\n", 
@@ -647,28 +669,36 @@ func (cfg *apiConfig) deleteChirpHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	chirpID := r.PathValue("chirpID")
+	chirpIDStr := r.PathValue("chirpID")
+	
+	chirpIDInt, ConvErr := strconv.Atoi(chirpIDStr)
+	if ConvErr != nil {
+		http.Error(w, "Invalid chirp ID format in path", http.StatusBadRequest)
+		return
+	}
+
 	tokenString, err := auth.GetBearerToken(r.Header)
 	if err != nil {
 		http.Error(w, "Authentication failed or not been provided", http.StatusUnauthorized)
 		return
 	}
 
-	chirps, err := cfg.db.RetrieveChirps(r.Context())
-	if err != nil {
-		http.Error(w, "Could not get chirp", http.StatusInternalServerError)
-	}
-
-	userID, err := auth.ValidateJWT(tokenString, cfg.jwtSecret)
+	userID, err := auth.ValidateJWT(tokenString, []byte(cfg.jwtSecret))
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte("Unauthorized User"))
 		return
 	}
 
+	chirps, err := cfg.db.RetrieveChirps(r.Context(), int32(0))
+	if err != nil {
+		http.Error(w, "Could not get chirp", http.StatusInternalServerError)
+		return
+	}
+
 	for _, chirp := range chirps {
-		if chirp.ID.String() == chirpID {
-			if userID == chirp.UserID.UUID {
+		if chirp.ID == int32(chirpIDInt) {
+			if userID == int(chirp.AuthorID) {
 				err := cfg.db.DeleteChirp(r.Context(), chirp.ID)
 				if err != nil {
 					http.Error(w, "Could not delete chirp", http.StatusInternalServerError)
@@ -710,11 +740,13 @@ func (cfg *apiConfig) polkaWebhookHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	parsedID, parseErr := uuid.Parse(webhook.Data.UserID)
+	userIDInt, parseErr := strconv.Atoi(webhook.Data.UserID)
 	if parseErr != nil {
 		http.Error(w, "Unable to parse id", http.StatusBadRequest)
 		return
 	}
+
+	parsedID := int32(userIDInt)
 
 	result, err := cfg.db.UpgradeUser(r.Context(), parsedID)
 	if err != nil {

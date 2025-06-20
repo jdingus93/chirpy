@@ -9,8 +9,6 @@ import (
 	"context"
 	"database/sql"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 const getUserFromRefreshToken = `-- name: GetUserFromRefreshToken :one
@@ -21,7 +19,7 @@ WHERE token = $1 AND revoked_at IS NULL AND expires_at > NOW()
 `
 
 type GetUserFromRefreshTokenRow struct {
-	ID        uuid.UUID
+	ID        int32
 	RevokedAt sql.NullTime
 	ExpiresAt time.Time
 }

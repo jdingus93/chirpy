@@ -7,32 +7,31 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 const createChirp = `-- name: CreateChirp :one
-INSERT INTO chirps (id, created_at, updated_at, body, user_id)
+INSERT INTO chirps (created_at, updated_at, body, user_id, author_id)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, created_at, updated_at, body, user_id
+RETURNING id, created_at, updated_at, body, user_id, author_id
 `
 
 type CreateChirpParams struct {
-	ID        uuid.UUID
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	Body      string
-	UserID    uuid.NullUUID
+	UserID    sql.NullInt32
+	AuthorID  int32
 }
 
 func (q *Queries) CreateChirp(ctx context.Context, arg CreateChirpParams) (Chirp, error) {
 	row := q.db.QueryRowContext(ctx, createChirp,
-		arg.ID,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 		arg.Body,
 		arg.UserID,
+		arg.AuthorID,
 	)
 	var i Chirp
 	err := row.Scan(
@@ -41,6 +40,7 @@ func (q *Queries) CreateChirp(ctx context.Context, arg CreateChirpParams) (Chirp
 		&i.UpdatedAt,
 		&i.Body,
 		&i.UserID,
+		&i.AuthorID,
 	)
 	return i, err
 }

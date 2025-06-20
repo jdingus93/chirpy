@@ -1,12 +1,12 @@
 -- +goose Up
 CREATE TABLE chirps (
-    id UUID UNIQUE PRIMARY KEY,
+    id SERIAL UNIQUE PRIMARY KEY,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     body TEXT NOT NULL,
-    user_id UUID,
+    user_id INTEGER,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 -- +goose Down
-DROP TABLE chirps
+DROP TABLE chirps;

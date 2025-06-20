@@ -1,5 +1,5 @@
 CREATE TABLE users (
-    id UUID PRIMARY KEY,
+    id SERIAL PRIMARY KEY,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     email TEXT UNIQUE NOT NULL,
@@ -8,19 +8,19 @@ CREATE TABLE users (
 );
 
 CREATE TABLE chirps (
-    id UUID UNIQUE PRIMARY KEY,
+    id SERIAL UNIQUE PRIMARY KEY,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     body TEXT NOT NULL,
-    user_id UUID,
-    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    user_id INTEGER,
+    author_id INTEGER REFERENCES users(id) ON DELETE CASCADE NOT NULL
 );
 
 CREATE TABLE refresh_tokens (
     token TEXT PRIMARY KEY,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
-    user_id UUID NOT NULL,
+    user_id INTEGER NOT NULL,
     expires_at TIMESTAMP NOT NULL,
     revoked_at TIMESTAMP NULL,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE

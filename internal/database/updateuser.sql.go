@@ -8,8 +8,6 @@ package database
 import (
 	"context"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 const updateUser = `-- name: UpdateUser :one
@@ -22,11 +20,11 @@ RETURNING id, created_at, updated_at, email, hashed_password
 type UpdateUserParams struct {
 	Email          string
 	HashedPassword string
-	ID             uuid.UUID
+	ID             int32
 }
 
 type UpdateUserRow struct {
-	ID             uuid.UUID
+	ID             int32
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 	Email          string

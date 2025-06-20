@@ -10,12 +10,13 @@ import (
 )
 
 const retrieveChirps = `-- name: RetrieveChirps :many
-SELECT id, created_at, updated_at, body, user_id FROM chirps
+SELECT id, created_at, updated_at, body, user_id, author_id FROM chirps
+WHERE author_id = $1 OR $1 = 0
 ORDER BY created_at ASC
 `
 
-func (q *Queries) RetrieveChirps(ctx context.Context) ([]Chirp, error) {
-	rows, err := q.db.QueryContext(ctx, retrieveChirps)
+func (q *Queries) RetrieveChirps(ctx context.Context, authorID int32) ([]Chirp, error) {
+	rows, err := q.db.QueryContext(ctx, retrieveChirps, authorID)
 	if err != nil {
 		return nil, err
 	}
@@ -29,6 +30,7 @@ func (q *Queries) RetrieveChirps(ctx context.Context) ([]Chirp, error) {
 			&i.UpdatedAt,
 			&i.Body,
 			&i.UserID,
+			&i.AuthorID,
 		); err != nil {
 			return nil, err
 		}

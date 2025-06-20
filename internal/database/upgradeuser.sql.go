@@ -8,14 +8,12 @@ package database
 import (
 	"context"
 	"database/sql"
-
-	"github.com/google/uuid"
 )
 
 const upgradeUser = `-- name: UpgradeUser :execresult
 UPDATE users SET is_chirpy_red = TRUE WHERE id = $1
 `
 
-func (q *Queries) UpgradeUser(ctx context.Context, id uuid.UUID) (sql.Result, error) {
+func (q *Queries) UpgradeUser(ctx context.Context, id int32) (sql.Result, error) {
 	return q.db.ExecContext(ctx, upgradeUser, id)
 }

@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+	"strconv"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -27,12 +27,12 @@ func CheckPasswordHash(hash, password string) error {
 	return err
 }
 
-func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (string, error) {
+func MakeJWT(userID int32, tokenSecret []byte, expiresIn time.Duration) (string, error) {
 	claims := jwt.RegisteredClaims{
 		Issuer: "chirpy",
 		IssuedAt: jwt.NewNumericDate(time.Now()),
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiresIn)),
-		Subject: userID.String(),
+		Subject: strconv.Itoa(int(userID)),
 	}
 	fmt.Printf("Token expires at: %v\n", claims.ExpiresAt.Time)
 	
@@ -45,22 +45,32 @@ func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (str
 	return tokenString, nil
 }
 
-func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
-	var claims jwt.RegisteredClaims
-	_ , err := jwt.ParseWithClaims(tokenString, &claims, func(token *jwt.Token) (interface{}, error){
-		return []byte(tokenSecret), nil
+func ValidateJWT(tokenString string, jwtSecret []byte) (int, error) {
+	claims := &jwt.RegisteredClaims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error){
+		return jwtSecret, nil
 	})
 	fmt.Printf("Token validated at: %v", err)
 	fmt.Printf("Extracted Subject: %v'\n", claims.Subject)
 
 	if err != nil {
-		return uuid.UUID{}, err
+		return 0, fmt.Errorf("failed to parse JWT: %w", err)
 	}
-	parsed, err := uuid.Parse(claims.Subject)
-	if err != nil {
-		return uuid.UUID{}, err
+	if !token.Valid {
+		return 0, fmt.Errorf("invalid token")
 	}
-	return parsed, nil
+
+	userIDStr := claims.Subject
+	if userIDStr == "" {
+		return 0, fmt.Errorf("subject claim missing in token")
+	}
+
+	userIDInt, convErr := strconv.Atoi(userIDStr)
+	if convErr != nil {
+		return 0, fmt.Errorf("invalid user ID format in subjectr claim: %w", convErr)
+	}
+
+	return userIDInt, nil
 }
 
 func GetBearerToken(headers http.Header) (string, error) {

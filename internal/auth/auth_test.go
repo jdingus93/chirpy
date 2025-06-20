@@ -5,15 +5,13 @@ import (
 	"testing"
 	"time"
 	"errors"
-
-	"github.com/google/uuid"
 )
 
 var ErrNoAuthHeader = errors.New("authorization header not found")
 
 func TestMakeJWT(t *testing.T) {
-	UserID := uuid.New()
-	tokenSecret := "my-secret-key"
+	UserID := int32(123)
+	tokenSecret := []byte("my-secret-key")
 	expiresIn := 30 * time.Minute
 
 	tokenString, err := MakeJWT(UserID, tokenSecret, expiresIn)
@@ -28,8 +26,8 @@ func TestMakeJWT(t *testing.T) {
 }
 
 func TestValidateJWT(t *testing.T) {
-	UserID := uuid.New()
-	tokenSecret := "my-secret-key"
+	UserID := int32(123)
+	tokenSecret := []byte("my-secret-key")
 	expiresIn := 30 * time.Minute
 
 	tokenString, err := MakeJWT(UserID, tokenSecret, expiresIn)
@@ -48,14 +46,14 @@ func TestValidateJWT(t *testing.T) {
 		t.Errorf("Expected error to be: %v", validationErr)
 	}
 
-	if returnedUserID != UserID {
+	if returnedUserID != int(UserID) {
 		t.Errorf("Returned user id %v doesn't match expected %v", returnedUserID, UserID)
 	}
 }
 
 func TestValidateJWT_Expired(t *testing.T) {
-	UserID := uuid.New()
-	tokenSecret := "my-secret-key"
+	UserID := int32(123)
+	tokenSecret := []byte("my-secret-key")
 	expiresIn := 30 * time.Minute
 
 	tokenString, err := MakeJWT(UserID, tokenSecret, expiresIn)
@@ -74,14 +72,14 @@ func TestValidateJWT_Expired(t *testing.T) {
 		t.Errorf("Expected error to be: %v", validationErr)
 	}
 
-	if returnedUserID != UserID {
+	if returnedUserID != int(UserID) {
 		t.Errorf("Returned user id %v doesn't match expected %v", returnedUserID, UserID)
 	}
 }
 
 func TestTokenString_Expired(t *testing.T) {
-	UserID := uuid.New()
-	tokenSecret := "my-secret-key"
+	UserID := int32(123)
+	tokenSecret := []byte("my-secret-key")
 	expiresIn := -30 * time.Minute
 
 	tokenString, err := MakeJWT(UserID, tokenSecret, expiresIn)
