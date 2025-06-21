@@ -9,6 +9,15 @@ import (
 	"context"
 )
 
+const deleteAllChirps = `-- name: DeleteAllChirps :exec
+DELETE FROM chirps
+`
+
+func (q *Queries) DeleteAllChirps(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteAllChirps)
+	return err
+}
+
 const deleteChirp = `-- name: DeleteChirp :exec
 DELETE FROM chirps
 WHERE id = $1

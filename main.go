@@ -8,17 +8,18 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
-	"strconv"
 
 	"home/spongedingus/workspace/chirpy/internal/auth"
 	"home/spongedingus/workspace/chirpy/internal/database"
 
-	"github.com/pressly/goose/v3"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"github.com/pressly/goose/v3"
 )
 
 type apiConfig struct {
@@ -158,6 +159,12 @@ func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
 	err := cfg.db.DeleteAllUsers(r.Context())
 	if err != nil {
 		http.Error(w, "Could not delete users", http.StatusInternalServerError)
+		return
+	}
+
+	err = cfg.db.DeleteAllChirps(r.Context())
+	if err != nil {
+		http.Error(w, "Could not delete chirps", http.StatusInternalServerError)
 		return
 	}
 
@@ -441,6 +448,7 @@ func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, r *http.Request){
 
 	} else {
 		chirpsToReturn, dbErr = cfg.db.RetrieveChirps(r.Context(), int32(0))
+
 	}
 
 	if dbErr != nil {
@@ -448,6 +456,15 @@ func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, r *http.Request){
 		return
 		}
 
+	sortParam := r.URL.Query().Get("sort")
+	if sortParam == "desc" {
+		sort.Slice(chirpsToReturn, func(i, j int) bool {
+		return chirpsToReturn[j].CreatedAt.Before(chirpsToReturn[i].CreatedAt)
+	})} else {
+	sort.Slice(chirpsToReturn, func(i, j int) bool {
+		return chirpsToReturn[i].CreatedAt.Before(chirpsToReturn[j].CreatedAt)
+	})} 
+	
 	type chirpResponse struct {
     ID        int32 `json:"id"`
     CreatedAt time.Time `json:"created_at"`
